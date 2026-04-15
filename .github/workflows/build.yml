@@ -1,116 +1,200 @@
-name: Build GKI
+name: Build Kernel
 
 on:
-  workflow_call:
-    inputs:
-      TODO:
-        type: string
-      VARIANT:
-        type: string
-      LAST_BUILD:
-        type: string
-      KERNEL_VERSION:
-        type: string
-
   workflow_dispatch:
     inputs:
       TODO:
-        description: To do
+        description: "Generate"
         default: "kernel"
         type: choice
         options:
           - "kernel"
           - "defconfig"
+      kernelrepo:
+        description: "Kernel Repository"
+        default: "main"
+        type: choice
+        options:
+          - "main"
+          - "rama"
+      TCPCONG:
+        description: "TCP Congestion Control"
+        default: "bbrplus"
+        type: choice
+        options:
+          - "bbrplus"
+          - "westwood"
+      CLANGURL:
+        description: "Select Clang Version"
+        default: "gf-clang"
+        type: choice
+        options:
+          - "12"
+          - "19"
+          - "20"
+          - "22"
+          - "neutron"
+          - "gf-clang"
+      LTOBUILD:
+        description: "Setup LTO"
+        default: "thin"
+        type: choice
+        options:
+          - "full"
+          - "thin"
       VARIANT:
-        description: kernel variants
-        default: "KSU"
+        description: "Kernel Variants"
+        default: "SUSFS"
         type: choice
         options:
           - "VNL"
           - "KSU"
-          - "KSUS"
-      KERNEL_VERSION:
-        description: Which kernel version do you want to build?
-        default: "5.10"
+          - "SUSFS"
+          - "ALL"
+      CONFIGHZ:
+        description: "Custom HZ"
+        default: "250"
         type: choice
         options:
-          - "6.6"
-          - "6.1"
-          - "5.10"
+          - "250"
+          - "300"
+      build_type:
+        description: "Build type"
+        required: true
+        default: "test"
+        type: choice
+        options:
+          - test
+          - release
+      KERNELBRANCH:
+        description: "Kernel Branch (Main Repo)"
+        required: true
+        default: "Staging"
+        type: choice
+        options:
+          - test
+          - Staging
+          - Kinosaki-CASS
+          - android12-5.10
+          - android12-5.10-staging
+      KERNELNAME:
+        description: "Kernel Name"
+        default: "Sagiri"
+        type: string
 
 env:
   MAN_DISABLE: true
   DEBIAN_FRONTEND: noninteractive
-  GIT_CLONE_PROTECTION_ACTIVE: false
-  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }} # telegram chat id
-  TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }} # telegram bot token
-  GH_TOKEN: ${{ secrets.GH_TOKEN }} # github token
-  VARIANT: ${{ inputs.VARIANT }}
-  LAST_BUILD: ${{ inputs.LAST_BUILD }}
-  TODO: ${{ inputs.TODO }}
-  KVER: ${{ inputs.KERNEL_VERSION }}
+  BASE_NAME: Sagiri
+  BUILD_TYPE: ${{ github.event.inputs.build_type }}
+  TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ inputs.VARIANT == 'ALL' && fromJson('["KSU","VNL","SUSFS"]') || fromJson(format('["{0}"]', inputs.VARIANT || 'SUSFS')) }}
 
     steps:
-      - name: Checkout source
+      - name: Checkout Source
         uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo apt clean
+
+      - name: Setup Swap 20GB
+        uses: pierotofy/set-swap-space@master
         with:
-          fetch-depth: 1
+          swap-size-gb: 20
 
-      - name: Determine Build Status
-        run: |
-          if [ "${{ toJson(github.event.inputs) }}" == "null" ]; then
-            echo "STATUS=RELEASE" >> $GITHUB_ENV
-          else
-            echo "STATUS=BETA" >> $GITHUB_ENV
-          fi
-
-      - name: Validate Inputs and Secrets
-        run: |
-          _error() {
-              echo "❌ ERROR: $*"
-              let ret++
-          }
-
-          ret=0
-          # Check Secrets
-          if [[ -z "$TG_CHAT_ID" ]]; then
-            _error "Missing TG_CHAT_ID secret (Telegram Chat ID)"
-          fi
-          if [[ -z "$TG_BOT_TOKEN" ]]; then
-            _error "Missing TG_BOT_TOKEN secret (Telegram Bot Token)"
-          fi
-          if [[ -z "$GH_TOKEN" ]]; then
-            _error "Missing GH_TOKEN secret (GitHub PAT)"
-          fi
-
-          if [[ $ret -gt 0 ]]; then
-            exit $ret
-          fi
-
-      - name: Install Dependencies
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gh bc bison flex libssl-dev libelf-dev dwarves cpio
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev dwarves cpio aria2 zip unzip libxml2 libxml2-dev device-tree-compiler build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
           pip install lxml
 
       - name: Run Build Script
+        env:
+          VARIANT: ${{ matrix.variant }}
+          KERNEL_NAME: ${{ inputs.KERNELNAME }}
+          REPONYA: ${{ inputs.kernelrepo }}
+          LTOBUILD: ${{ inputs.LTOBUILD }}
+          CLANGURL: ${{ inputs.CLANGURL }}
+          TCPCONG: ${{ inputs.TCPCONG }}
+          CONFIGHZ: ${{ inputs.CONFIGHZ }}
+          KERNELBRANCH: ${{ inputs.KERNELBRANCH }}
+          TODO: ${{ inputs.TODO }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          chmod +x *.sh py/*.py
+          chmod +x *.sh
+          if [ -d "py" ]; then chmod +x py/*.py; fi
           ./build.sh
 
-      - name: Upload AnyKernel artifacts
+      - name: Upload Intermediary Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BASE_NAME }}-${{ github.run_number }}
-          path: |
-            artifacts/*.zip
+          name: kernel-${{ matrix.variant }}
+          path: artifacts/*.zip
+ 
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.build_type == 'release' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - name: Upload Info.txt artifact
-        uses: actions/upload-artifact@v4
+      - name: Download All Matrix Artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: info-${{ github.run_number }}
-          path: artifacts/*.txt
+          path: all-artifacts
+          pattern: kernel-*
+          merge-multiple: true
+
+      - name: Create Unified GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BUILD_TIME=$(date +"%Y%m%d-%H%M")
+          KERNEL_NAME="${{ inputs.KERNELNAME || 'Kinosaki' }}"
+
+          RELEASE_TAG="${KERNEL_NAME}-${BUILD_TIME}"
+
+          echo "Creating Release Tag: $RELEASE_TAG"
+
+          gh release create "$RELEASE_TAG" \
+            --repo "rinnsakaguchi/builder" \
+            --title "$KERNEL_NAME | $BUILD_TIME" \
+            --notes "Automated release build at $BUILD_TIME." || true
+
+          sleep 3
+
+          gh release upload "$RELEASE_TAG" all-artifacts/*.zip \
+            --repo "rinnsakaguchi/builder" \
+            --clobber
+
+      - name: Send Release Notification to Telegram
+        run: |
+          BUILD_TIME=$(date +"%Y%m%d-%H%M")
+          RELEASE_TAG="${{ inputs.KERNELNAME || 'Kinosaki' }}-${BUILD_TIME}"
+
+          RELEASE_URL="https://github.com/rinnsakaguchi/builder/releases/tag/$RELEASE_TAG"
+
+          MSG="🚀 *New Release Published!*%0A%0A📱 *Kernel*: \`${{ inputs.KERNELNAME }}\`%0A🔖 *Tag*: \`$RELEASE_TAG\`%0A%0A🔗 [Download Here]($RELEASE_URL)"
+
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TG_CHAT_ID }}" \
+            -d "message_thread_id=7" \
+            -d "parse_mode=markdown" \
+            -d "text=$MSG"

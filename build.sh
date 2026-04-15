@@ -1,325 +1,424 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2164
+#
+# Rey's GKI Kernel Builder
+#
 
-# Constants
+set -euo pipefail
+
+# Paths
 WORKDIR="$(pwd)"
-if [[ "$KVER" == "6.6" ]]; then
-  RELEASE="v0.3"
-elif [[ "$KVER" == "5.10" ]]; then
-  RELEASE="v0.6"
-elif [[ "$KVER" == "6.1" ]]; then
-  RELEASE="v0.1"
-fi
-
-KERNEL_NAME="OtagKernel"
-USER="eraselk"
-HOST="gacorprjkt"
-TIMEZONE="Asia/Makassar"
-ANYKERNEL_REPO="https://github.com/linastorvaldz/AnyKernel3"
-ANYKERNEL_BRANCH="master"
-
-if [[ "$KVER" == "5.10" ]]; then
-  KERNEL_DEFCONFIG="otag_defconfig"
-else
-  KERNEL_DEFCONFIG="quartix_defconfig"
-fi
-
-if [[ "$KVER" == "6.6" ]]; then
-  KERNEL_REPO="https://github.com/linastorvaldz/kernel-android15-6.6"
-  KERNEL_BRANCH="android15-6.6-lts"
-elif [[ "$KVER" == "6.1" ]]; then
-  KERNEL_REPO="https://github.com/linastorvaldz/kernel-android14-6.1"
-  KERNEL_BRANCH="android14-6.1-lts"
-elif [[ "$KVER" == "5.10" ]]; then
-  KERNEL_REPO="https://github.com/linastorvaldz/kernel-android12-5.10"
-  KERNEL_BRANCH="rebase"
-fi
-
-DEFCONFIG_TO_MERGE=""
-GKI_RELEASES_REPO="https://github.com/linastorvaldz/OtagKernel-releases"
-#CLANG_URL="https://github.com/linastorvaldz/idk/releases/download/clang-r547379/clang.tgz"
-CLANG_URL="https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b/archive/refs/heads/lineage-20.0.tar.gz"
-CLANG_BRANCH=""
-AK3_ZIP_NAME="$KERNEL_NAME-REL-KVER-VARIANT-BUILD_DATE.zip"
 OUTDIR="$WORKDIR/out"
 KSRC="$WORKDIR/ksrc"
-KERNEL_PATCHES="$WORKDIR/kernel-patches"
+KERNEL_PATCHES="$WORKDIR/patch"
+KERNEL_BRANCH="${KERNELBRANCH:-}"
+KERNEL_NAME="${KERNEL_NAME:-Kinosaki}"
 
-# Handle error
-exec > >(tee "$WORKDIR/build.log") 2>&1
-trap 'error "Failed at line $LINENO [$BASH_COMMAND]"' ERR
+# Identity
+KBUILD_BUILD_USER="dev"
+KBUILD_BUILD_HOST="rey"
+TIMEZONE="Asia/Jakarta"
 
-# Import functions
+# Build Defaults
+KERNEL_DEFCONFIG="gki_defconfig"
+ANYKERNEL_REPO="https://github.com/rinnsakaguchi/AnyKernel3"
+ANYKERNEL_BRANCH="master"
+GKI_RELEASES_REPO="rinnsakaguchi/GKI-Release"
+BUILD_START=$(date +%s)
+
 source "$WORKDIR/functions.sh"
 
-# Set timezone
-sudo timedatectl set-timezone "$TIMEZONE" || export TZ="$TIMEZONE"
+# Colors
+R='\033[0;31m'; G='\033[0;32m'; Y='\033[0;33m'
+B='\033[0;34m'; C='\033[0;36m'; W='\033[0m'
 
-# Clone kernel source
-log "Cloning kernel source from $(simplify_gh_url "$KERNEL_REPO")"
-git clone -q --depth=1 "$KERNEL_REPO" -b "$KERNEL_BRANCH" "$KSRC"
+info()    { echo -e "${B}[INFO]${W}  $*"; }
+success() { echo -e "${G}[OK]${W}    $*"; }
+warn()    { echo -e "${Y}[WARN]${W}  $*"; }
+die()     { echo -e "${R}[ERR]${W}   $*" >&2; exit 1; }
 
+trap 'die "Failed at line $LINENO [$BASH_COMMAND]"' ERR
+
+exec > >(tee "$WORKDIR/build.log") 2>&1
+
+# Timezone
+sudo timedatectl set-timezone "$TIMEZONE" 2>/dev/null || export TZ="$TIMEZONE"
+
+# Validate Required Env
+for var in REPONYA CLANGURL VARIANT CONFIGHZ TCPCONG LTOBUILD; do
+    [[ -n "${!var:-}" ]] || die "Required env var \$$var is not set"
+done
+
+# Repo Selection
+case "$REPONYA" in
+    main)
+        KERNEL_REPO="https://github.com/rinnsakaguchi/android_kernel_common-5.10"
+        ;;
+    rama)
+        KERNEL_REPO="https://github.com/ramabondanp/android_kernel_common-5.10"
+        KERNEL_BRANCH="android12-5.10-staging"
+        export KERNEL_BRANCH
+        ;;
+    *)
+        die "Invalid REPONYA: $REPONYA (valid: main | rama)"
+        ;;
+esac
+
+# Clang URL Selection
+case "$CLANGURL" in
+    12)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/06a71ddac05c22edb2d10b590e1769b3f8619bef/clang-r416183b.tar.gz" ;;
+    19)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/192fe0d378bb9cd4d4271de3e87145a1956fef40/clang-r536225.tar.gz" ;;
+    20)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz" ;;
+    22)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/8b6826407e25a197d7cf7ceacab0bf67c11173de/clang-r596125.tar.gz" ;;
+    neutron|gf-clang) ;;
+    *)    die "Invalid CLANGURL: $CLANGURL" ;;
+esac
+
+# Clone Kernel
+info "Cloning kernel source from $(simplify_gh_url "$KERNEL_REPO") ..."
+git clone -q --depth=1 --single-branch -b "$KERNEL_BRANCH" "$KERNEL_REPO" "$KSRC" &
+CLONE_PID=$!
+
+# Setup Clang
+CLANG_DIR="$WORKDIR/clang"
+
+setup_google_clang() {
+    info "Downloading Google Clang ($CLANGURL)..."
+    mkdir -p "$CLANG_DIR"
+    aria2c -x16 -s16 -k1M --retry-wait=3 --max-tries=5 \
+        "$CLANG_URL" -o clang-archive || die "Clang download failed"
+
+    case "$(basename "$CLANG_URL")" in
+        *.tar.*|*.tgz) tar -xf clang-archive -C "$CLANG_DIR" ;;
+        *.7z)          7z x clang-archive -o"${CLANG_DIR}/" -bd -y >/dev/null ;;
+        *)             die "Unsupported clang archive format" ;;
+    esac
+    rm -f clang-archive
+
+    # Flatten nested dir if present
+    local subdirs
+    subdirs=$(find "$CLANG_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)
+    local files
+    files=$(find "$CLANG_DIR" -mindepth 1 -maxdepth 1 -type f | wc -l)
+    if [[ $subdirs -eq 1 && $files -eq 0 ]]; then
+        local single
+        single=$(find "$CLANG_DIR" -mindepth 1 -maxdepth 1 -type d)
+        mv "$single"/* "$CLANG_DIR"/
+        rm -rf "$single"
+    fi
+}
+
+if [[ "$CLANGURL" != "neutron" && "$CLANGURL" != "gf-clang" ]]; then
+    setup_google_clang
+
+elif [[ "$CLANGURL" == "gf-clang" ]]; then
+    info "Using GreenForce Clang..."
+    pushd "$WORKDIR" >/dev/null
+    bash <(wget -qO- https://raw.githubusercontent.com/greenforce-project/greenforce_clang/refs/heads/main/get_clang.sh)
+    [[ -d "$WORKDIR/greenforce-clang" ]] || die "greenforce-clang directory not found"
+    rm -rf "$CLANG_DIR"
+    mv "$WORKDIR/greenforce-clang" "$CLANG_DIR"
+    popd >/dev/null
+
+else
+    info "Using Neutron Clang (antman)..."
+    mkdir -p "$CLANG_DIR"
+    pushd "$CLANG_DIR" >/dev/null
+    curl -LO https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman
+    chmod +x antman
+    ./antman -S
+    popd >/dev/null
+fi
+
+# Resolve clang bin path
+_clang_bin=$(find "$CLANG_DIR" -path '*/bin/clang' \( -type f -o -type l \) | head -n1)
+if [[ -z "$_clang_bin" ]]; then
+    # Last-resort: check if antman installed to ~/.neutron-tc
+    _clang_bin=$(find "$HOME/.neutron-tc" -path '*/bin/clang' \( -type f -o -type l \) 2>/dev/null | head -n1)
+    if [[ -n "$_clang_bin" ]]; then
+        warn "Neutron installed to ~/.neutron-tc — symlinking to $CLANG_DIR"
+        rm -rf "$CLANG_DIR"
+        ln -sf "$HOME/.neutron-tc" "$CLANG_DIR"
+        _clang_bin=$(find "$CLANG_DIR" -path '*/bin/clang' \( -type f -o -type l \) | head -n1)
+    fi
+fi
+[[ -n "$_clang_bin" ]] || die "Cannot locate clang binary under $CLANG_DIR"
+CLANG_BIN=$(dirname "$_clang_bin")
+unset _clang_bin
+export PATH="$CLANG_BIN:$PATH"
+
+# Validate toolchain
+[[ -x "$CLANG_BIN/clang"  ]] || die "clang binary not found in $CLANG_BIN"
+[[ -x "$CLANG_BIN/ld.lld" ]] || die "ld.lld binary not found in $CLANG_BIN"
+success "Toolchain: $(clang --version | head -n1)"
+
+# Wait for kernel clone
+wait $CLONE_PID || die "Kernel clone failed"
+success "Kernel cloned"
+
+# Kernel Info
 cd "$KSRC"
 LINUX_VERSION=$(make kernelversion)
-LINUX_VERSION_CODE=${LINUX_VERSION//./}
-DEFCONFIG_FILE=$(find ./arch/arm64/configs -name "$KERNEL_DEFCONFIG")
-k_lastcommit=$(git rev-parse --short HEAD)
-cd "$WORKDIR"
+KVER="$LINUX_VERSION"
+LINUX_MAJOR="${LINUX_VERSION%%.*}"
+COMPILER_STRING=$(clang --version | head -n1)
+k_lastcommit=$(git -C "$KSRC" rev-parse --short HEAD)
+LASTCOMMITS=$(git -C "$KSRC" log -5 --pretty=format:"- %h %s (%an)" | \
+    sed ':a;N;$!ba;s/\n/\\n/g')
 
-# Set Kernel variant
-log "Setting Kernel variant..."
-susfs_included && VARIANT="KSU+SuSFS"
+info "Kernel version : $LINUX_VERSION"
+info "Last commit    : $k_lastcommit"
 
-# Replace Placeholder in zip name
-AK3_ZIP_NAME=${AK3_ZIP_NAME//KVER/$LINUX_VERSION}
-AK3_ZIP_NAME=${AK3_ZIP_NAME//VARIANT/$VARIANT}
+# Locate defconfig
+DEFCONFIG_FILE=$(find "$KSRC/arch/arm64/configs" -name "$KERNEL_DEFCONFIG" -print -quit)
+[[ -f "$DEFCONFIG_FILE" ]] || die "Defconfig '$KERNEL_DEFCONFIG' not found"
+DEFCONFIG="$DEFCONFIG_FILE"
 
-# Download Clang
-CLANG_DIR="$WORKDIR/clang"
-CLANG_BIN="${CLANG_DIR}/bin"
-if [[ -z "$CLANG_BRANCH" ]]; then
-  log "🔽 Downloading Clang..."
-  wget -qO clang-archive "$CLANG_URL"
-  mkdir -p "$CLANG_DIR"
-  case "$(basename $CLANG_URL)" in
-    *.tar.* | *.tgz)
-      tar -xf clang-archive -C "$CLANG_DIR"
-      ;;
-    *.7z)
-      7z x clang-archive -o"${CLANG_DIR}/" -bd -y > /dev/null
-      ;;
-    *)
-      error "Unsupported file format"
-      ;;
-  esac
-  rm clang-archive
+# Variant Setup
+info "Setting up variant: $VARIANT"
 
-  if [[ $(find "$CLANG_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l) -eq 1 ]] \
-    && [[ $(find "$CLANG_DIR" -mindepth 1 -maxdepth 1 -type f | wc -l) -eq 0 ]]; then
-    SINGLE_DIR=$(find "$CLANG_DIR" -mindepth 1 -maxdepth 1 -type d)
-    mv "$SINGLE_DIR"/* "$CLANG_DIR"/
-    rm -rf "$SINGLE_DIR"
-  fi
-else
-  log "🔽 Cloning Clang..."
-  git clone --depth=1 -q "$CLANG_URL" -b "$CLANG_BRANCH" "$CLANG_DIR"
-fi
+# Wipe any old KSU config lines
+sed -i '/CONFIG_KSU/d'        "$DEFCONFIG"
+sed -i '/CONFIG_KSU_SUSFS/d'  "$DEFCONFIG"
 
-# Clone GNU Assembler
-log "Cloning GNU Assembler..."
-GAS_DIR="$WORKDIR/gas"
-git clone --depth=1 -q \
-  https://android.googlesource.com/platform/prebuilts/gas/linux-x86 \
-  -b main \
-  "$GAS_DIR"
+if [[ "$VARIANT" == "KSU" || "$VARIANT" == "SUSFS" ]]; then
+    curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" \
+        | bash -s dev-susfs
 
-export PATH="${CLANG_BIN}:${GAS_DIR}:$PATH"
-
-# Extract clang version
-COMPILER_STRING=$(clang --version | head -n 1 | sed 's/(https..*//' | sed 's/ version//')
-
-cd "$KSRC"
-
-## KernelSU setup
-if ksu_included; then
-  # Remove existing KernelSU drivers
-  for KSU_PATH in drivers/staging/kernelsu drivers/kernelsu KernelSU KernelSU-Next; do
-    if [[ -d $KSU_PATH ]]; then
-      log "KernelSU driver found in $KSU_PATH, Removing..."
-      KSU_DIR=$(dirname "$KSU_PATH")
-
-      [[ -f "$KSU_DIR/Kconfig" ]] && sed -i '/kernelsu/d' "$KSU_DIR/Kconfig"
-      [[ -f "$KSU_DIR/Makefile" ]] && sed -i '/kernelsu/d' "$KSU_DIR/Makefile"
-
-      rm -rf $KSU_PATH
+    info "Patching All Managers support..."
+    if [[ -d "KernelSU-Next" ]]; then
+        patch -p1 -d KernelSU-Next < "$KERNEL_PATCHES/ksu-manager.patch" || die "ksu-manager patch failed"
+    elif [[ -d "drivers/kernelsu" ]]; then
+        patch -p1 -d drivers/kernelsu < "$KERNEL_PATCHES/ksu-manager.patch" || die "ksu-manager patch failed"
+    else
+        die "KernelSU directory not found after setup"
     fi
-  done
-
-  install_ksu 'pershoot/KernelSU-Next' 'dev-susfs'
-  config --enable CONFIG_KSU
-
-  cd KernelSU-Next
-  patch -p1 < "$KERNEL_PATCHES/ksu/ksun-add-more-managers-support.patch"
-  cd "$OLDPWD"
 fi
 
-# SUSFS
-if susfs_included; then
-  # Kernel-side
-  log "Applying kernel-side susfs patches"
-  SUSFS_DIR="$WORKDIR/susfs"
-  SUSFS_PATCHES="${SUSFS_DIR}/kernel_patches"
-  if [[ "$KVER" == "6.6" ]]; then
-    SUSFS_BRANCH=gki-android15-6.6
-  elif [[ "$KVER" == "6.1" ]]; then
-    SUSFS_BRANCH=gki-android14-6.1
-  elif [[ "$KVER" == "5.10" ]]; then
-    SUSFS_BRANCH=gki-android12-5.10
-  fi
-  git clone --depth=1 -q https://gitlab.com/simonpunk/susfs4ksu -b "$SUSFS_BRANCH" "$SUSFS_DIR"
-  cp -R "$SUSFS_PATCHES"/fs/* ./fs
-  cp -R "$SUSFS_PATCHES"/include/* ./include
-  patch -p1 < "$SUSFS_PATCHES/50_add_susfs_in_${SUSFS_BRANCH}.patch" || true
-  if [[ $(echo "$LINUX_VERSION_CODE" | head -c4) -eq 6630 ]]; then
-    patch -p1 < "$KERNEL_PATCHES/susfs/namespace.c_fix.patch"
-    patch -p1 < "$KERNEL_PATCHES/susfs/task_mmu.c_fix.patch"
-  elif [[ $(echo "$LINUX_VERSION_CODE" | head -c4) -eq 6658 ]]; then
-    patch -p1 < "$KERNEL_PATCHES/susfs/task_mmu.c_fix-k6.6.58.patch"
-  elif [[ $(echo "$LINUX_VERSION_CODE" | head -c2) -eq 61 ]]; then
-    patch -p1 < "$KERNEL_PATCHES/susfs/fs_proc_base.c-fix-k6.1.patch"
-  fi
-  if [[ $(echo "$LINUX_VERSION_CODE" | head -c1) -eq 6 ]]; then
-    patch -p1 < "$KERNEL_PATCHES/susfs/fix-statfs-crc-mismatch-susfs.patch"
-  fi
-  pershoot_susfs '3a288f01c379be4454ecaa0cb5d2d2494ba719e6'
-  pershoot_susfs '98b3fc2b178ec638d968966771fbf82b5cbb72b1'
-  SUSFS_VERSION=$(grep -E '^#define SUSFS_VERSION' ./include/linux/susfs.h | cut -d' ' -f3 | sed 's/"//g')
-  config --enable CONFIG_KSU_SUSFS
+case "$VARIANT" in
+    VNL)
+        echo "ENABLE_SUSFS=false" >> "$GITHUB_ENV"
+        ;;
+
+    KSU)
+        echo "CONFIG_KSU=y"                    >> "$DEFCONFIG"
+        echo "# CONFIG_KSU_SUSFS is not set"   >> "$DEFCONFIG"
+        echo "ENABLE_SUSFS=false"              >> "$GITHUB_ENV"
+        ;;
+
+    SUSFS)
+        git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu/ \
+            -b gki-android12-5.10 sus
+        rm -rf sus/.git
+        cp -r sus/kernel_patches/fs .
+        cp -r sus/kernel_patches/include .
+        patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch \
+            || die "SuSFS patch failed"
+        rm -rf sus
+
+        echo "CONFIG_KSU=y"         >> "$DEFCONFIG"
+        echo "CONFIG_KSU_SUSFS=y"   >> "$DEFCONFIG"
+
+        # Disable uname spoof to fix build
+        KSU_SU_FILE=$(find drivers/ -name "supercalls.c" -print -quit)
+        if [[ -f "$KSU_SU_FILE" ]]; then
+            sed -i 's|#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME|#if 0 /* disabled */|' \
+                "$KSU_SU_FILE" || true
+        fi
+        echo "ENABLE_SUSFS=true" >> "$GITHUB_ENV"
+        ;;
+
+    *)
+        die "Unknown VARIANT: $VARIANT (valid: VNL | KSU | SUSFS)"
+        ;;
+esac
+
+# Defconfig
+info "Tuning defconfig..."
+
+# HZ
+sed -i '/CONFIG_HZ_/d; /CONFIG_HZ=/d' "$DEFCONFIG"
+echo "CONFIG_HZ_${CONFIGHZ}=y" >> "$DEFCONFIG"
+echo "CONFIG_HZ=${CONFIGHZ}"   >> "$DEFCONFIG"
+
+# LTO
+sed -i '/CONFIG_LTO_/d; /CONFIG_THINLTO/d; /CONFIG_LTO=/d' "$DEFCONFIG"
+case "${LTOBUILD,,}" in
+    thin)
+        info "LTO: ThinLTO"
+        echo "CONFIG_LTO_CLANG=y"      >> "$DEFCONFIG"
+        echo "CONFIG_THINLTO=y"        >> "$DEFCONFIG"
+        echo "CONFIG_LTO_CLANG_THIN=y" >> "$DEFCONFIG"
+        echo "# CONFIG_LTO_NONE is not set" >> "$DEFCONFIG"
+        ;;
+    full)
+        info "LTO: Full LTO"
+        echo "CONFIG_LTO_CLANG=y"      >> "$DEFCONFIG"
+        echo "CONFIG_LTO_CLANG_FULL=y" >> "$DEFCONFIG"
+        echo "# CONFIG_THINLTO is not set"  >> "$DEFCONFIG"
+        echo "# CONFIG_LTO_NONE is not set" >> "$DEFCONFIG"
+        ;;
+    none|*)
+        info "LTO: Disabled"
+        echo "CONFIG_LTO_NONE=y"            >> "$DEFCONFIG"
+        echo "# CONFIG_LTO_CLANG is not set" >> "$DEFCONFIG"
+        ;;
+esac
+
+# TCP Congestion
+case "$TCPCONG" in
+    westwood) use_westwood ;;
+    bbrplus)  use_bbrplus  ;;
+    *)        die "Unknown TCP congestion: $TCPCONG (valid: westwood | bbrplus)" ;;
+esac
+
+# Localversion
+SUFFIX="$k_lastcommit"
+config --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}/${SUFFIX}"
+config --disable CONFIG_LOCALVERSION_AUTO
+sed -i 's/echo "+"/# echo "+"/g' scripts/setlocalversion
+
+# ccache
+if command -v ccache &>/dev/null; then
+    export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"
+    export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-10G}"
+    export CCACHE_COMPRESS=1
+    export USE_CCACHE=1
+    CC_WRAPPER="ccache clang"
+    info "ccache enabled ($(ccache -s | grep 'cache size' | awk '{print $NF}'))"
 else
-  config --disable CONFIG_KSU_SUSFS
+    CC_WRAPPER="clang"
+    warn "ccache not found — install for faster rebuilds"
 fi
 
-# set localversion
-if [[ $TODO == "kernel" ]]; then
-  if [[ $STATUS == "BETA" ]]; then
-    SUFFIX="$k_lastcommit"
-  else
-    SUFFIX="$RELEASE"
-  fi
-  config --set-str CONFIG_LOCALVERSION "-$KERNEL_NAME/$SUFFIX"
-  config --disable CONFIG_LOCALVERSION_AUTO
-  sed -i 's/echo "+"/# echo "+"/g' scripts/setlocalversion
-fi
-
-# Declare needed variables
-export KBUILD_BUILD_USER="$USER"
-export KBUILD_BUILD_HOST="$HOST"
-KBUILD_BUILD_TIMESTAMP=$(date)
-export KBUILD_BUILD_TIMESTAMP
+# Build Environment
+export KBUILD_BUILD_USER
+export KBUILD_BUILD_HOST
+export KBUILD_BUILD_TIMESTAMP="$(date)"
 export KCFLAGS="-w"
+MAKE=$(command -v make)
+
 MAKE_ARGS=(
-  LLVM=1
-  LLVM_IAS=1
-  ARCH=arm64
-  CROSS_COMPILE=aarch64-linux-gnu-
-  CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
-  "-j$(nproc --all)"
-  "O=$OUTDIR"
+    ARCH=arm64
+    O="$OUTDIR"
+
+    CC="$CC_WRAPPER"
+    LD=ld.lld
+
+    LLVM=1
+    LLVM_IAS=1
+
+    HOSTCC="$CC_WRAPPER"
+    HOSTCXX=clang++
+
+    AR=llvm-ar
+    NM=llvm-nm
+    OBJCOPY=llvm-objcopy
+    OBJDUMP=llvm-objdump
+    STRIP=llvm-strip
+
+    CROSS_COMPILE=aarch64-linux-gnu-
+    CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+    "-j$(nproc)"
 )
 
 KERNEL_IMAGE="$OUTDIR/arch/arm64/boot/Image"
 MODULE_SYMVERS="$OUTDIR/Module.symvers"
-if [[ $(echo "$LINUX_VERSION_CODE" | head -c1) -eq 6 ]]; then
-  KMI_CHECK="$WORKDIR/py/kmi-check-6.x.py"
-else
-  KMI_CHECK="$WORKDIR/py/kmi-check-5.x.py"
+
+# Generate Config
+info "Generating config..."
+$MAKE "${MAKE_ARGS[@]}" "$KERNEL_DEFCONFIG"
+$MAKE "${MAKE_ARGS[@]}" olddefconfig
+
+# Defconfig-only
+if [[ "${TODO:-}" == "defconfig" ]]; then
+    info "Uploading defconfig..."
+    upload_file "$OUTDIR/.config"
+    exit 0
 fi
 
-text=$(
-  cat << EOF
-*Kernel Version*: \`${LINUX_VERSION}\`
-*Build Date*: \`${KBUILD_BUILD_TIMESTAMP}\`
-*Variant*: \`${VARIANT}\`
-*SuSFS*: \`$(susfs_included && echo "${SUSFS_VERSION}" || echo "None")\`
-*Compiler*: \`${COMPILER_STRING}\`
-*Kernol commit*: [${k_lastcommit}](${KERNEL_REPO}/commit/${k_lastcommit})
+# Build Kernel
+info "Building kernel with $(nproc) threads..."
+$MAKE "${MAKE_ARGS[@]}"
+
+BUILD_END=$(date +%s)
+BUILD_ELAPSED=$(( BUILD_END - BUILD_START ))
+BUILD_MIN=$(( BUILD_ELAPSED / 60 ))
+BUILD_SEC=$(( BUILD_ELAPSED % 60 ))
+success "Kernel built in ${BUILD_MIN}m ${BUILD_SEC}s"
+
+# Validate Output
+[[ -f "$KERNEL_IMAGE" ]] || die "Kernel Image not found at $KERNEL_IMAGE"
+IMAGE_SIZE=$(du -sh "$KERNEL_IMAGE" | cut -f1)
+info "Image size: $IMAGE_SIZE"
+
+# KMI Check
+if [[ "$LINUX_MAJOR" -eq 6 ]]; then
+    KMI_CHECK_SCRIPT="$WORKDIR/py/kmi-check-6.x.py"
+    KMI_ABI="$KSRC/android/abi_gki_aarch64.stg"
+else
+    KMI_CHECK_SCRIPT="$WORKDIR/py/kmi-check-5.x.py"
+    KMI_ABI="$KSRC/android/abi_gki_aarch64.xml"
+fi
+"$KMI_CHECK_SCRIPT" "$KMI_ABI" "$MODULE_SYMVERS" || \
+    warn "KMI mismatch detected — vendor modules may fail to load"
+
+# Package AnyKernel3
+BUILD_DATE=$(TZ=Asia/Jakarta date +"%Y%m%d")
+AK3_ZIP_NAME="AK3-${KERNEL_NAME}-${KVER}-${VARIANT}-${BUILD_DATE}.zip"
+
+cd "$WORKDIR"
+info "Cloning AnyKernel3 from $(simplify_gh_url "$ANYKERNEL_REPO")..."
+git clone -q --depth=1 "$ANYKERNEL_REPO" -b "$ANYKERNEL_BRANCH" anykernel
+
+cd anykernel
+
+# Copy Kernel Image
+cp "$KERNEL_IMAGE" .
+
+# Package ZIP
+info "Zipping AnyKernel3 package..."
+zip -r9 "$WORKDIR/$AK3_ZIP_NAME" ./* -x "*.git*"
+cd "$OLDPWD"
+
+ZIP_FINAL_SIZE=$(du -sh "$WORKDIR/$AK3_ZIP_NAME" | cut -f1)
+success "Package: $AK3_ZIP_NAME ($ZIP_FINAL_SIZE)"
+
+echo "BASE_NAME=${KERNEL_NAME}-${VARIANT}" >> "$GITHUB_ENV"
+
+# Move to Artifacts
+ARTIFACT_DIR="$WORKDIR/artifacts"
+ZIP_PATH="$ARTIFACT_DIR/$AK3_ZIP_NAME"
+mkdir -p "$ARTIFACT_DIR"
+mv "$WORKDIR/$AK3_ZIP_NAME" "$ARTIFACT_DIR/"
+
+# Telegram Notification
+text_tg=$(cat << EOF
+📱 *Kernel Version*: \`${LINUX_VERSION}\`
+📅 *Build Date*: \`${KBUILD_BUILD_TIMESTAMP}\`
+⚙️ *Variant*: \`${VARIANT}\`
+🚀 *LTO*: \`${LTOBUILD}\`
+🛠 *Compiler*: \`${COMPILER_STRING}\`
+⏱ *Build Time*: \`${BUILD_MIN}m ${BUILD_SEC}s\`
+📦 *Package Size*: \`${ZIP_FINAL_SIZE}\`
+
+🔖 *Last Commit*: [${k_lastcommit}](${KERNEL_REPO}/commit/${k_lastcommit})
+
+📜 *Recent Changes*:
+\`\`\`
+${LASTCOMMITS}
+\`\`\`
 EOF
 )
 
-## Build GKI
-log "Generating config..."
-make "${MAKE_ARGS[@]}" "$KERNEL_DEFCONFIG"
-
-if [[ "$DEFCONFIG_TO_MERGE" ]]; then
-  log "Merging configs..."
-  if [[ -f "scripts/kconfig/merge_config.sh" ]]; then
-    for config in $DEFCONFIG_TO_MERGE; do
-      make "${MAKE_ARGS[@]}" scripts/kconfig/merge_config.sh "$config"
-    done
-  else
-    error "scripts/kconfig/merge_config.sh does not exist in the kernel source"
-  fi
-  make "${MAKE_ARGS[@]}" olddefconfig
+if [[ "${BUILD_TYPE:-}" != "release" ]]; then
+    info "Sending test build to Telegram..."
+    upload_file "$ZIP_PATH" "$text_tg"
 fi
 
-# Upload defconfig if we are doing defconfig
-if [[ $TODO == "defconfig" ]]; then
-  log "Uploading defconfig..."
-  upload_file "$OUTDIR/.config"
-  exit 0
-fi
-
-# Build the actual kernel
-log "Building kernel..."
-make "${MAKE_ARGS[@]}"
-
-# Check KMI Function symbol
-if [[ $(echo "$LINUX_VERSION_CODE" | head -c1) -eq 6 ]]; then
-  $KMI_CHECK "$KSRC/android/abi_gki_aarch64.stg" "$MODULE_SYMVERS" || true
-else
-  $KMI_CHECK "$KSRC/android/abi_gki_aarch64.xml" "$MODULE_SYMVERS" || true
-fi
-
-## Post-compiling stuff
-cd "$WORKDIR"
-
-# Clone AnyKernel
-log "Cloning anykernel from $(simplify_gh_url "$ANYKERNEL_REPO")"
-git clone -q --depth=1 $ANYKERNEL_REPO -b $ANYKERNEL_BRANCH anykernel
-
-# Set kernel string in anykernel
-if [[ $STATUS == "BETA" ]]; then
-  BUILD_DATE=$(date -d "$KBUILD_BUILD_TIMESTAMP" +"%Y%m%d-%H%M")
-  AK3_ZIP_NAME=${AK3_ZIP_NAME//BUILD_DATE/$BUILD_DATE}
-  AK3_ZIP_NAME=${AK3_ZIP_NAME//-REL/}
-  sed -i \
-    "s/kernel.string=.*/kernel.string=${KERNEL_NAME} ${LINUX_VERSION} (${BUILD_DATE}) ${VARIANT}/g" \
-    "$WORKDIR/anykernel/anykernel.sh"
-else
-  AK3_ZIP_NAME=${AK3_ZIP_NAME//-BUILD_DATE/}
-  AK3_ZIP_NAME=${AK3_ZIP_NAME//REL/$RELEASE}
-  sed -i \
-    "s/kernel.string=.*/kernel.string=${KERNEL_NAME} ${RELEASE} ${LINUX_VERSION} ${VARIANT}/g" \
-    "$WORKDIR/anykernel/anykernel.sh"
-fi
-
-# Set supported kernel version in anykernel
-sed -i "s/supported_kver=.*/supported_kver='$KVER'/g" "$WORKDIR/anykernel/anykernel.sh"
-
-# Copy banner to anykernel if available
-if [ -f "$WORKDIR/banner" ]; then
-  cp "$WORKDIR/banner" "$WORKDIR/anykernel/banner"
-fi
-
-# Zip the anykernel
-cd anykernel
-log "Zipping anykernel..."
-cp "$KERNEL_IMAGE" .
-zip -r9 "$WORKDIR/$AK3_ZIP_NAME" ./*
-cd "$OLDPWD"
-
-if [[ $STATUS != "BETA" ]]; then
-  echo "BASE_NAME=$KERNEL_NAME-$VARIANT" >> "$GITHUB_ENV"
-  mkdir -p "$WORKDIR/artifacts"
-  mv "$WORKDIR"/*.zip "$WORKDIR/artifacts"
-fi
-
-if [[ $LAST_BUILD == "true" ]] && [[ $STATUS != "BETA" ]]; then
-  (
-    echo "LINUX_VERSION=$LINUX_VERSION"
-    echo "SUSFS_VERSION=$(curl -s https://gitlab.com/simonpunk/susfs4ksu/raw/gki-android15-6.6/kernel_patches/include/linux/susfs.h | grep -E '^#define SUSFS_VERSION' | cut -d' ' -f3 | sed 's/"//g')"
-    echo "KERNEL_NAME=$KERNEL_NAME"
-    echo "RELEASE_REPO=$(simplify_gh_url "$GKI_RELEASES_REPO")"
-    echo "RELEASE=$RELEASE"
-    echo "KVER=$KVER"
-  ) >> "$WORKDIR/artifacts/info.txt"
-fi
-
-if [[ $STATUS == "BETA" ]]; then
-  upload_file "$WORKDIR/$AK3_ZIP_NAME" "$text"
-  upload_file "$WORKDIR/build.log"
-else
-  send_msg "✅ Build Succeeded for $VARIANT variant."
-fi
+# Cleanup
+info "Cleaning up build artifacts..."
+rm -rf "$KSRC" "$CLANG_DIR" "$WORKDIR/anykernel" "$OUTDIR"
+success "Done! Total time: ${BUILD_MIN}m ${BUILD_SEC}s"
 
 exit 0
