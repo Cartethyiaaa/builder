@@ -74,6 +74,7 @@ on:
         options:
           - test
           - Kinosaki-CASS
+          - Staging
           - android12-5.10
           - android12-5.10-staging
       KERNELNAME:
