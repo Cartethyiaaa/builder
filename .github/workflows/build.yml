@@ -72,9 +72,8 @@ on:
         default: "test"
         type: choice
         options:
-          - lts
           - test
-          - Kinosaki
+          - Kinosaki-CASS
           - android12-5.10
           - android12-5.10-staging
       KERNELNAME:
