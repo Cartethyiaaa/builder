@@ -44,7 +44,7 @@ on:
           - "thin"
       VARIANT:
         description: "Kernel Variants"
-        default: "ALL"
+        default: "SUSFS"
         type: choice
         options:
           - "VNL"
@@ -69,12 +69,12 @@ on:
       KERNELBRANCH:
         description: "Kernel Branch (Main Repo)"
         required: true
-        default: "test"
+        default: "Staging"
         type: choice
         options:
           - test
-          - Kinosaki-CASS
           - Staging
+          - Kinosaki-CASS
           - android12-5.10
           - android12-5.10-staging
       KERNELNAME:
@@ -125,14 +125,14 @@ jobs:
       - name: Run Build Script
         env:
           VARIANT: ${{ matrix.variant }}
-          KERNEL_NAME: ${{ inputs.KERNELNAME || 'Kinosaki' }}
-          REPONYA: ${{ inputs.kernelrepo || 'main' }}
-          LTOBUILD: ${{ inputs.LTOBUILD || 'thin' }}
-          CLANGURL: ${{ inputs.CLANGURL || 'gf-clang' }}
-          TCPCONG: ${{ inputs.TCPCONG || 'bbrplus' }}
-          CONFIGHZ: ${{ inputs.CONFIGHZ || '250' }}
-          KERNELBRANCH: ${{ inputs.KERNELBRANCH || 'test' }}
-          TODO: ${{ inputs.TODO || 'kernel' }}
+          KERNEL_NAME: ${{ inputs.KERNELNAME }}
+          REPONYA: ${{ inputs.kernelrepo }}
+          LTOBUILD: ${{ inputs.LTOBUILD }}
+          CLANGURL: ${{ inputs.CLANGURL }}
+          TCPCONG: ${{ inputs.TCPCONG }}
+          CONFIGHZ: ${{ inputs.CONFIGHZ }}
+          KERNELBRANCH: ${{ inputs.KERNELBRANCH }}
+          TODO: ${{ inputs.TODO }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x *.sh
@@ -166,45 +166,34 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BUILD_DATE=$(date +"%Y%m%d")
+          BUILD_TIME=$(date +"%Y%m%d-%H%M")
           KERNEL_NAME="${{ inputs.KERNELNAME || 'Kinosaki' }}"
-          RELEASE_TAG="${KERNEL_NAME}-${BUILD_DATE}"
-          
+
+          RELEASE_TAG="${KERNEL_NAME}-${BUILD_TIME}"
+
           echo "Creating Release Tag: $RELEASE_TAG"
-          
+
           gh release create "$RELEASE_TAG" \
             --repo "rinnsakaguchi/builder" \
-            --title "$KERNEL_NAME | $BUILD_DATE" \
-            --notes "Automated release build for $KERNEL_NAME branches." || true
-            
+            --title "$KERNEL_NAME | $BUILD_TIME" \
+            --notes "Automated release build at $BUILD_TIME." || true
+
           sleep 3
-            
+
           gh release upload "$RELEASE_TAG" all-artifacts/*.zip \
             --repo "rinnsakaguchi/builder" \
             --clobber
 
       - name: Send Release Notification to Telegram
         run: |
-          BUILD_DATE=$(date +"%Y%m%d")
-          RELEASE_TAG="${{ inputs.KERNELNAME || 'Kinosaki' }}-${BUILD_DATE}"
-          RELEASE_URL="https://github.com/rinnsakaguchi/GKI-Release/releases/tag/$RELEASE_TAG"
-          
-          MSG="🚀 *Unified Release Published!*%0A%0A📱 *Kernel*: \`${{ inputs.KERNELNAME || 'Kinosaki' }}\`%0A🔖 *Tag*: \`$RELEASE_TAG\`%0A%0A🔗 [Download All Variants Here]($RELEASE_URL)"
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TG_CHAT_ID }}" \
-            -d "parse_mode=markdown" \
-            -d "text=$MSG"
+          BUILD_TIME=$(date +"%Y%m%d-%H%M")
+          RELEASE_TAG="${{ inputs.KERNELNAME || 'Kinosaki' }}-${BUILD_TIME}"
 
-  notify-test:
-    needs: [build]
-    runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.build_type != 'release' && always() }}
-    steps:
-      - name: Send Test Completion Notification
-        run: |
-          MSG="✅ *Test Build Completed!*%0A%0A📱 *Kernel*: \`${{ inputs.KERNELNAME || 'Kinosaki' }}\`%0A📦 Check your Telegram channel/thread for individual zip deliveries."
+          RELEASE_URL="https://github.com/rinnsakaguchi/builder/releases/tag/$RELEASE_TAG"
+
+          MSG="🚀 *New Release Published!*%0A%0A📱 *Kernel*: \`${{ inputs.KERNELNAME || 'Kinosaki' }}\`%0A🔖 *Tag*: \`$RELEASE_TAG\`%0A⏰ *Build Time*: \`$BUILD_TIME\`%0A%0A🔗 [Download Here]($RELEASE_URL)"
+
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.TG_CHAT_ID }}" \
-            -d "message_thread_id=7" \
             -d "parse_mode=markdown" \
             -d "text=$MSG"
