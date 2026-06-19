@@ -66,25 +66,33 @@ esac
 # Clang URL Selection
 case "$CLANGURL" in
     12)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/06a71ddac05c22edb2d10b590e1769b3f8619bef/clang-r416183b.tar.gz" ;;
-    19)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/192fe0d378bb9cd4d4271de3e87145a1956fef40/clang-r536225.tar.gz" ;;
-    20)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz" ;;
     22)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/8b6826407e25a197d7cf7ceacab0bf67c11173de/clang-r596125.tar.gz" ;;
-    neutron|gf-clang) ;;
+    neutron) ;;
     *)    die "Invalid CLANGURL: $CLANGURL" ;;
 esac
 
 # Clone Kernel
 info "Cloning kernel source from $(simplify_gh_url "$KERNEL_REPO") ..."
-git clone -q --depth=1 --single-branch -b "$KERNEL_BRANCH" "$KERNEL_REPO" "$KSRC" &
+git clone -q --depth=1 --single-branch --filter=blob:none -b "$KERNEL_BRANCH" "$KERNEL_REPO" "$KSRC" &
 CLONE_PID=$!
 
 # Setup Clang
 CLANG_DIR="$WORKDIR/clang"
+CLANG_CACHE_DIR="${CLANG_CACHE_DIR:-$HOME/.cache/gki-clang}"
 
 setup_google_clang() {
+    local cache_key="$CLANG_CACHE_DIR/${CLANGURL}-$(basename "$CLANG_URL")"
+
+    if [[ -d "$cache_key" && -x "$cache_key/bin/clang" ]]; then
+        info "Using cached Clang ($CLANGURL) from $cache_key"
+        mkdir -p "$CLANG_DIR"
+        cp -r "$cache_key"/. "$CLANG_DIR"/
+        return 0
+    fi
+
     info "Downloading Google Clang ($CLANGURL)..."
     mkdir -p "$CLANG_DIR"
-    aria2c -x16 -s16 -k1M --retry-wait=3 --max-tries=5 \
+    aria2c -x16 -s16 -k1M --retry-wait=3 --max-tries=5 --summary-interval=0 \
         "$CLANG_URL" -o clang-archive || die "Clang download failed"
 
     case "$(basename "$CLANG_URL")" in
@@ -105,20 +113,14 @@ setup_google_clang() {
         mv "$single"/* "$CLANG_DIR"/
         rm -rf "$single"
     fi
+
+    # Populate cache for next run
+    mkdir -p "$cache_key"
+    cp -r "$CLANG_DIR"/. "$cache_key"/ 2>/dev/null || warn "Could not populate clang cache"
 }
 
-if [[ "$CLANGURL" != "neutron" && "$CLANGURL" != "gf-clang" ]]; then
+if [[ "$CLANGURL" != "neutron" ]]; then
     setup_google_clang
-
-elif [[ "$CLANGURL" == "gf-clang" ]]; then
-    info "Using GreenForce Clang..."
-    pushd "$WORKDIR" >/dev/null
-    bash <(wget -qO- https://raw.githubusercontent.com/greenforce-project/greenforce_clang/refs/heads/main/get_clang.sh)
-    [[ -d "$WORKDIR/greenforce-clang" ]] || die "greenforce-clang directory not found"
-    rm -rf "$CLANG_DIR"
-    mv "$WORKDIR/greenforce-clang" "$CLANG_DIR"
-    popd >/dev/null
-
 else
     info "Using Neutron Clang (antman)..."
     mkdir -p "$CLANG_DIR"
@@ -250,17 +252,12 @@ case "${LTOBUILD,,}" in
         echo "CONFIG_LTO_CLANG_THIN=y" >> "$DEFCONFIG"
         echo "# CONFIG_LTO_NONE is not set" >> "$DEFCONFIG"
         ;;
-    full)
+    full|*)
         info "LTO: Full LTO"
         echo "CONFIG_LTO_CLANG=y"      >> "$DEFCONFIG"
         echo "CONFIG_LTO_CLANG_FULL=y" >> "$DEFCONFIG"
         echo "# CONFIG_THINLTO is not set"  >> "$DEFCONFIG"
         echo "# CONFIG_LTO_NONE is not set" >> "$DEFCONFIG"
-        ;;
-    none|*)
-        info "LTO: Disabled"
-        echo "CONFIG_LTO_NONE=y"            >> "$DEFCONFIG"
-        echo "# CONFIG_LTO_CLANG is not set" >> "$DEFCONFIG"
         ;;
 esac
 
@@ -268,7 +265,8 @@ esac
 case "$TCPCONG" in
     westwood) use_westwood ;;
     bbrplus)  use_bbrplus  ;;
-    *)        die "Unknown TCP congestion: $TCPCONG (valid: westwood | bbrplus)" ;;
+    bbr)      use_bbr      ;;
+    *)        die "Unknown TCP congestion: $TCPCONG (valid: bbr | bbrplus | westwood)" ;;
 esac
 
 # Localversion
@@ -280,8 +278,9 @@ sed -i 's/echo "+"/# echo "+"/g' scripts/setlocalversion
 # ccache
 if command -v ccache &>/dev/null; then
     export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"
-    export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-10G}"
+    export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-15G}"
     export CCACHE_COMPRESS=1
+    export CCACHE_COMPRESSLEVEL="${CCACHE_COMPRESSLEVEL:-5}"
     export USE_CCACHE=1
     CC_WRAPPER="ccache clang"
     info "ccache enabled ($(ccache -s | grep 'cache size' | awk '{print $NF}'))"
@@ -319,7 +318,7 @@ MAKE_ARGS=(
     CROSS_COMPILE=aarch64-linux-gnu-
     CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
 
-    "-j$(nproc)"
+    "-j$(nproc --all)"
 )
 
 KERNEL_IMAGE="$OUTDIR/arch/arm64/boot/Image"
@@ -337,8 +336,13 @@ if [[ "${TODO:-}" == "defconfig" ]]; then
     exit 0
 fi
 
+# Kick off AnyKernel3 clone in the background while the kernel compiles
+info "Cloning AnyKernel3 from $(simplify_gh_url "$ANYKERNEL_REPO") (background)..."
+git clone -q --depth=1 "$ANYKERNEL_REPO" -b "$ANYKERNEL_BRANCH" "$WORKDIR/anykernel" &
+AK3_CLONE_PID=$!
+
 # Build Kernel
-info "Building kernel with $(nproc) threads..."
+info "Building kernel with $(nproc --all) threads..."
 $MAKE "${MAKE_ARGS[@]}"
 
 BUILD_END=$(date +%s)
@@ -367,11 +371,8 @@ fi
 BUILD_DATE=$(TZ=Asia/Jakarta date +"%Y%m%d")
 AK3_ZIP_NAME="AK3-${KERNEL_NAME}-${KVER}-${VARIANT}-${BUILD_DATE}.zip"
 
-cd "$WORKDIR"
-info "Cloning AnyKernel3 from $(simplify_gh_url "$ANYKERNEL_REPO")..."
-git clone -q --depth=1 "$ANYKERNEL_REPO" -b "$ANYKERNEL_BRANCH" anykernel
-
-cd anykernel
+wait "$AK3_CLONE_PID" || die "AnyKernel3 clone failed"
+cd "$WORKDIR/anykernel"
 
 # Copy Kernel Image
 cp "$KERNEL_IMAGE" .
@@ -379,7 +380,7 @@ cp "$KERNEL_IMAGE" .
 # Package ZIP
 info "Zipping AnyKernel3 package..."
 zip -r9 "$WORKDIR/$AK3_ZIP_NAME" ./* -x "*.git*"
-cd "$OLDPWD"
+cd "$WORKDIR"
 
 ZIP_FINAL_SIZE=$(du -sh "$WORKDIR/$AK3_ZIP_NAME" | cut -f1)
 success "Package: $AK3_ZIP_NAME ($ZIP_FINAL_SIZE)"

@@ -46,6 +46,21 @@ use_westwood() {
   echo 'CONFIG_DEFAULT_TCP_CONG="westwood"' >> "$DEFCONFIG"
 }
 
+# bbrv3
+use_bbr() {
+  sed -i '/CONFIG_DEFAULT_TCP_CONG=/d' "$DEFCONFIG"
+  sed -i '/CONFIG_DEFAULT_WESTWOOD/d' "$DEFCONFIG"
+
+  sed -i '/CONFIG_TCP_CONG_BBRPLUS/d' "$DEFCONFIG"
+  sed -i '/CONFIG_TCP_CONG_WESTWOOD/d' "$DEFCONFIG"
+
+  echo "# CONFIG_TCP_CONG_BBRPLUS is not set" >> "$DEFCONFIG"
+  echo "# CONFIG_TCP_CONG_WESTWOOD is not set" >> "$DEFCONFIG"
+
+  echo "CONFIG_DEFAULT_BBR=y" >> "$DEFCONFIG"
+  echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> "$DEFCONFIG"
+}
+
 # bbrplus
 use_bbrplus() {
   sed -i '/CONFIG_DEFAULT_TCP_CONG=/d' "$DEFCONFIG"

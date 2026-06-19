@@ -19,22 +19,20 @@ on:
           - "rama"
       TCPCONG:
         description: "TCP Congestion Control"
-        default: "bbrplus"
+        default: "bbr"
         type: choice
         options:
+          - "bbr"
           - "bbrplus"
           - "westwood"
       CLANGURL:
         description: "Select Clang Version"
-        default: "gf-clang"
+        default: "22"
         type: choice
         options:
           - "12"
-          - "19"
-          - "20"
           - "22"
           - "neutron"
-          - "gf-clang"
       LTOBUILD:
         description: "Setup LTO"
         default: "thin"
@@ -69,7 +67,7 @@ on:
       KERNELBRANCH:
         description: "Kernel Branch (Main Repo)"
         required: true
-        default: "Staging"
+        default: "test"
         type: choice
         options:
           - test
@@ -119,8 +117,25 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev libelf-dev dwarves cpio aria2 zip unzip libxml2 libxml2-dev device-tree-compiler build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev dwarves cpio aria2 zip unzip libxml2 libxml2-dev device-tree-compiler build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi ccache
           pip install lxml
+
+      - name: Cache Clang Toolchain
+        if: ${{ inputs.CLANGURL != 'neutron' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/gki-clang
+          key: clang-${{ inputs.CLANGURL }}-${{ runner.os }}
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ matrix.variant }}-${{ inputs.kernelrepo }}-${{ inputs.KERNELBRANCH }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ matrix.variant }}-${{ inputs.kernelrepo }}-${{ inputs.KERNELBRANCH }}-
+            ccache-${{ matrix.variant }}-${{ inputs.kernelrepo }}-
+            ccache-${{ matrix.variant }}-
 
       - name: Run Build Script
         env:
