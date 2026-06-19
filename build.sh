@@ -14,8 +14,8 @@ KERNEL_BRANCH="${KERNELBRANCH:-}"
 KERNEL_NAME="${KERNEL_NAME:-Kinosaki}"
 
 # Identity
-KBUILD_BUILD_USER="dev"
-KBUILD_BUILD_HOST="rey"
+KBUILD_BUILD_USER="rey"
+KBUILD_BUILD_HOST="ivy"
 TIMEZONE="Asia/Jakarta"
 
 # Build Defaults
@@ -273,7 +273,7 @@ esac
 
 # Localversion
 SUFFIX="$k_lastcommit"
-config --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}/${SUFFIX}"
+config --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}"
 config --disable CONFIG_LOCALVERSION_AUTO
 sed -i 's/echo "+"/# echo "+"/g' scripts/setlocalversion
 
