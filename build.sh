@@ -127,7 +127,8 @@ else
     pushd "$CLANG_DIR" >/dev/null
     curl -LO https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman
     chmod +x antman
-    ./antman -S
+    ./antman -S=10032024
+    ./antman --patch=glibc
     popd >/dev/null
 fi
 
@@ -275,20 +276,6 @@ config --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}"
 config --disable CONFIG_LOCALVERSION_AUTO
 sed -i 's/echo "+"/# echo "+"/g' scripts/setlocalversion
 
-# ccache
-if command -v ccache &>/dev/null; then
-    export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"
-    export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-15G}"
-    export CCACHE_COMPRESS=1
-    export CCACHE_COMPRESSLEVEL="${CCACHE_COMPRESSLEVEL:-5}"
-    export USE_CCACHE=1
-    CC_WRAPPER="ccache clang"
-    info "ccache enabled ($(ccache -s | grep 'cache size' | awk '{print $NF}'))"
-else
-    CC_WRAPPER="clang"
-    warn "ccache not found — install for faster rebuilds"
-fi
-
 # Build Environment
 export KBUILD_BUILD_USER
 export KBUILD_BUILD_HOST
@@ -300,13 +287,13 @@ MAKE_ARGS=(
     ARCH=arm64
     O="$OUTDIR"
 
-    CC="$CC_WRAPPER"
+    CC="clang"
     LD=ld.lld
 
     LLVM=1
     LLVM_IAS=1
 
-    HOSTCC="$CC_WRAPPER"
+    HOSTCC="clang"
     HOSTCXX=clang++
 
     AR=llvm-ar

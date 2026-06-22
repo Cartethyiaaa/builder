@@ -71,13 +71,12 @@ on:
         type: choice
         options:
           - test
-          - Staging
-          - Kinosaki-CASS
+          - v5.10
           - android12-5.10
           - android12-5.10-staging
       KERNELNAME:
         description: "Kernel Name"
-        default: "Sagiri"
+        default: "Cinnamon"
         type: string
 
 env:
@@ -119,23 +118,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev libelf-dev dwarves cpio aria2 zip unzip libxml2 libxml2-dev device-tree-compiler build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi ccache
           pip install lxml
-
-      - name: Cache Clang Toolchain
-        if: ${{ inputs.CLANGURL != 'neutron' }}
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/gki-clang
-          key: clang-${{ inputs.CLANGURL }}-${{ runner.os }}
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-${{ matrix.variant }}-${{ inputs.kernelrepo }}-${{ inputs.KERNELBRANCH }}-${{ github.run_id }}
-          restore-keys: |
-            ccache-${{ matrix.variant }}-${{ inputs.kernelrepo }}-${{ inputs.KERNELBRANCH }}-
-            ccache-${{ matrix.variant }}-${{ inputs.kernelrepo }}-
-            ccache-${{ matrix.variant }}-
 
       - name: Run Build Script
         env:
