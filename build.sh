@@ -22,7 +22,7 @@ TIMEZONE="Asia/Jakarta"
 KERNEL_DEFCONFIG="gki_defconfig"
 ANYKERNEL_REPO="https://github.com/rinnsakaguchi/AnyKernel3"
 ANYKERNEL_BRANCH="master"
-GKI_RELEASES_REPO="rinnsakaguchi/GKI-Release"
+GKI_RELEASES_REPO="Cartethyiaaa/builder"
 BUILD_START=$(date +%s)
 
 source "$WORKDIR/functions.sh"
@@ -51,7 +51,7 @@ done
 # Repo Selection
 case "$REPONYA" in
     main)
-        KERNEL_REPO="https://github.com/rinnsakaguchi/android_kernel_common-5.10"
+        KERNEL_REPO="https://github.com/Cartethyiaaa/android_kernel_common-5.10"
         ;;
     rama)
         KERNEL_REPO="https://github.com/ramabondanp/android_kernel_common-5.10"
@@ -66,7 +66,7 @@ esac
 # Clang URL Selection
 case "$CLANGURL" in
     12)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/06a71ddac05c22edb2d10b590e1769b3f8619bef/clang-r416183b.tar.gz" ;;
-    22)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/8b6826407e25a197d7cf7ceacab0bf67c11173de/clang-r596125.tar.gz" ;;
+    22)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/af3fae2c8e67673c43217d0cf75dbf3f268de272/clang-r596125.tar.gz" ;;
     neutron) ;;
     *)    die "Invalid CLANGURL: $CLANGURL" ;;
 esac
@@ -127,8 +127,7 @@ else
     pushd "$CLANG_DIR" >/dev/null
     curl -LO https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman
     chmod +x antman
-    ./antman -S=10032024
-    ./antman --patch=glibc
+    ./antman -S
     popd >/dev/null
 fi
 
