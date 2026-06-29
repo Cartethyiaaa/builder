@@ -86,7 +86,7 @@ env:
   BUILD_TYPE: ${{ github.event.inputs.build_type }}
   TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
   TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_TOKEN: ${{ secrets.YOUR_GITHUB_TOKEN }}
 
 jobs:
   build:
