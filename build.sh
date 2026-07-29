@@ -8,9 +8,9 @@ set -euo pipefail
 # Paths
 WORKDIR="$(pwd)"
 OUTDIR="$WORKDIR/out"
-KSRC="$WORKDIR/ksrc"
+GKI_DIR="$WORKDIR/gki"
+KSRC="$GKI_DIR/common"
 KERNEL_PATCHES="$WORKDIR/patch"
-KERNEL_BRANCH="${KERNELBRANCH:-}"
 KERNEL_NAME="${KERNEL_NAME:-Kinosaki}"
 
 # Identity
@@ -44,26 +44,75 @@ exec > >(tee "$WORKDIR/build.log") 2>&1
 sudo timedatectl set-timezone "$TIMEZONE" 2>/dev/null || export TZ="$TIMEZONE"
 
 # Validate Required Env
-for var in REPONYA CLANGURL VARIANT CONFIGHZ TCPCONG LTOBUILD; do
+for var in REPONYA GKIVER CLANGURL VARIANT CONFIGHZ TCPCONG LTOBUILD; do
     [[ -n "${!var:-}" ]] || die "Required env var \$$var is not set"
 done
 
-# Repo Selection
+# GKI Manifest Version
+case "$GKIVER" in
+    5.10)
+        MANIFEST_BRANCH="common-android12-5.10"
+        ;;
+    6.12)
+        MANIFEST_BRANCH="common-android16-6.12"
+        ;;
+    *)
+        die "Invalid GKIVER: $GKIVER (valid: 5.10 | 6.12)"
+        ;;
+esac
+
+# Init Sync
+info "Initializing and Syncing GKI Android $GKIVER Source Tree..."
+mkdir -p "$GKI_DIR" && cd "$GKI_DIR"
+
+repo init -u https://android.googlesource.com/kernel/manifest -b "$MANIFEST_BRANCH" --depth=1
+repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune "-j$(nproc --all)"
+
+cd "$WORKDIR"
+success "GKI manifest sync complete."
+
+cd "$KSRC"
+
 case "$REPONYA" in
     main)
-        KERNEL_REPO="https://github.com/Cartethyiaaa/android_kernel_common-5.10"
+        REMOTE_NAME="Cartethyiaaa"
+        case "$GKIVER" in
+            5.10)
+                KERNEL_REPO="https://github.com/Cartethyiaaa/android_kernel_common-5.10.git"
+                KERNEL_BRANCH="${KERNELBRANCH:-android12-5.10}"
+                ;;
+            6.12)
+                KERNEL_REPO="https://github.com/Cartethyiaaa/android_kernel_common-6.12.git"
+                KERNEL_BRANCH="${KERNELBRANCH:-android16-6.12}"
+                ;;
+        esac
         ;;
     rama)
-        KERNEL_REPO="https://github.com/ramabondanp/android_kernel_common-5.10"
+        [[ "$GKIVER" == "5.10" ]] || die "REPONYA=rama only has a 5.10 tree available"
+        REMOTE_NAME="Anisphia"
+        KERNEL_REPO="https://github.com/ramabondanp/android_kernel_common-5.10.git"
         KERNEL_BRANCH="android12-5.10-staging"
-        export KERNEL_BRANCH
         ;;
     *)
         die "Invalid REPONYA: $REPONYA (valid: main | rama)"
         ;;
 esac
 
-# Clang URL Selection
+info "Updating kernel source using $REMOTE_NAME ($KERNEL_BRANCH)..."
+
+if ! git remote | grep -q "^${REMOTE_NAME}$"; then
+    git remote add "$REMOTE_NAME" "$KERNEL_REPO"
+fi
+
+git fetch "-j$(nproc --all)" "$REMOTE_NAME"
+git checkout -B "update-${KERNEL_BRANCH}" "${REMOTE_NAME}/${KERNEL_BRANCH}"
+
+success "Kernel tree updated to ${REMOTE_NAME}/${KERNEL_BRANCH}"
+
+# Return to WORKDIR for toolchain setup
+cd "$WORKDIR"
+
+# TOOLCHAIN SETUP (CLANG)
 case "$CLANGURL" in
     12)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/06a71ddac05c22edb2d10b590e1769b3f8619bef/clang-r416183b.tar.gz" ;;
     22)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/af3fae2c8e67673c43217d0cf75dbf3f268de272/clang-r596125.tar.gz" ;;
@@ -71,12 +120,6 @@ case "$CLANGURL" in
     *)    die "Invalid CLANGURL: $CLANGURL" ;;
 esac
 
-# Clone Kernel
-info "Cloning kernel source from $(simplify_gh_url "$KERNEL_REPO") ..."
-git clone -q --depth=1 --single-branch --filter=blob:none -b "$KERNEL_BRANCH" "$KERNEL_REPO" "$KSRC" &
-CLONE_PID=$!
-
-# Setup Clang
 CLANG_DIR="$WORKDIR/clang"
 CLANG_CACHE_DIR="${CLANG_CACHE_DIR:-$HOME/.cache/gki-clang}"
 
@@ -153,11 +196,6 @@ export PATH="$CLANG_BIN:$PATH"
 [[ -x "$CLANG_BIN/ld.lld" ]] || die "ld.lld binary not found in $CLANG_BIN"
 success "Toolchain: $(clang --version | head -n1)"
 
-# Wait for kernel clone
-wait $CLONE_PID || die "Kernel clone failed"
-success "Kernel cloned"
-
-# Kernel Info
 cd "$KSRC"
 LINUX_VERSION=$(make kernelversion)
 KVER="$LINUX_VERSION"
@@ -198,13 +236,13 @@ fi
 
 case "$VARIANT" in
     VNL)
-        echo "ENABLE_SUSFS=false" >> "$GITHUB_ENV"
+        echo "ENABLE_SUSFS=false" >> "${GITHUB_ENV:-/dev/null}"
         ;;
 
     KSU)
         echo "CONFIG_KSU=y"                    >> "$DEFCONFIG"
         echo "# CONFIG_KSU_SUSFS is not set"   >> "$DEFCONFIG"
-        echo "ENABLE_SUSFS=false"              >> "$GITHUB_ENV"
+        echo "ENABLE_SUSFS=false"              >> "${GITHUB_ENV:-/dev/null}"
         ;;
 
     SUSFS)
@@ -226,7 +264,7 @@ case "$VARIANT" in
             sed -i 's|#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME|#if 0 /* disabled */|' \
                 "$KSU_SU_FILE" || true
         fi
-        echo "ENABLE_SUSFS=true" >> "$GITHUB_ENV"
+        echo "ENABLE_SUSFS=true" >> "${GITHUB_ENV:-/dev/null}"
         ;;
 
     *)
@@ -234,7 +272,7 @@ case "$VARIANT" in
         ;;
 esac
 
-# Defconfig
+# Defconfig Tuning
 info "Tuning defconfig..."
 
 # HZ
@@ -270,12 +308,10 @@ case "$TCPCONG" in
 esac
 
 # Localversion
-SUFFIX="$k_lastcommit"
 config --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}"
 config --disable CONFIG_LOCALVERSION_AUTO
 sed -i 's/echo "+"/# echo "+"/g' scripts/setlocalversion
 
-# Build Environment
 export KBUILD_BUILD_USER
 export KBUILD_BUILD_HOST
 export KBUILD_BUILD_TIMESTAMP="$(date)"
@@ -322,7 +358,7 @@ if [[ "${TODO:-}" == "defconfig" ]]; then
     exit 0
 fi
 
-# Kick off AnyKernel3 clone in the background while the kernel compiles
+# Clone AnyKernel3 in background
 info "Cloning AnyKernel3 from $(simplify_gh_url "$ANYKERNEL_REPO") (background)..."
 git clone -q --depth=1 "$ANYKERNEL_REPO" -b "$ANYKERNEL_BRANCH" "$WORKDIR/anykernel" &
 AK3_CLONE_PID=$!
@@ -353,17 +389,14 @@ fi
 "$KMI_CHECK_SCRIPT" "$KMI_ABI" "$MODULE_SYMVERS" || \
     warn "KMI mismatch detected — vendor modules may fail to load"
 
-# Package AnyKernel3
 BUILD_DATE=$(TZ=Asia/Jakarta date +"%Y%m%d")
 AK3_ZIP_NAME="AK3-${KERNEL_NAME}-${KVER}-${VARIANT}-${BUILD_DATE}.zip"
 
 wait "$AK3_CLONE_PID" || die "AnyKernel3 clone failed"
 cd "$WORKDIR/anykernel"
 
-# Copy Kernel Image
 cp "$KERNEL_IMAGE" .
 
-# Package ZIP
 info "Zipping AnyKernel3 package..."
 zip -r9 "$WORKDIR/$AK3_ZIP_NAME" ./* -x "*.git*"
 cd "$WORKDIR"
@@ -371,7 +404,7 @@ cd "$WORKDIR"
 ZIP_FINAL_SIZE=$(du -sh "$WORKDIR/$AK3_ZIP_NAME" | cut -f1)
 success "Package: $AK3_ZIP_NAME ($ZIP_FINAL_SIZE)"
 
-echo "BASE_NAME=${KERNEL_NAME}-${VARIANT}" >> "$GITHUB_ENV"
+echo "BASE_NAME=${KERNEL_NAME}-${VARIANT}" >> "${GITHUB_ENV:-/dev/null}"
 
 # Move to Artifacts
 ARTIFACT_DIR="$WORKDIR/artifacts"
@@ -405,7 +438,7 @@ fi
 
 # Cleanup
 info "Cleaning up build artifacts..."
-rm -rf "$KSRC" "$CLANG_DIR" "$WORKDIR/anykernel" "$OUTDIR"
+rm -rf "$GKI_DIR" "$CLANG_DIR" "$WORKDIR/anykernel" "$OUTDIR"
 success "Done! Total time: ${BUILD_MIN}m ${BUILD_SEC}s"
 
 exit 0
