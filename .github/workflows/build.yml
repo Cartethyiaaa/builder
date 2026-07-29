@@ -124,7 +124,7 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev libelf-dev dwarves cpio aria2 zip unzip libxml2 libxml2-dev device-tree-compiler build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi ccache
+          sudo apt install -y git curl bc bison unzip zip repo rsync
           pip install lxml
 
       - name: Run Build Script
