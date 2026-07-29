@@ -17,6 +17,13 @@ on:
         options:
           - "main"
           - "rama"
+      GKIVER:
+        description: "GKI Kernel Version"
+        default: "6.12"
+        type: choice
+        options:
+          - "5.10"
+          - "6.12"
       TCPCONG:
         description: "TCP Congestion Control"
         default: "bbr"
@@ -74,6 +81,7 @@ on:
           - v5.10
           - android12-5.10
           - android12-5.10-staging
+          - android16-6.12
       KERNELNAME:
         description: "Kernel Name"
         default: "Cinnamon"
@@ -124,6 +132,7 @@ jobs:
           VARIANT: ${{ matrix.variant }}
           KERNEL_NAME: ${{ inputs.KERNELNAME }}
           REPONYA: ${{ inputs.kernelrepo }}
+          GKIVER: ${{ inputs.GKIVER }}
           LTOBUILD: ${{ inputs.LTOBUILD }}
           CLANGURL: ${{ inputs.CLANGURL }}
           TCPCONG: ${{ inputs.TCPCONG }}
