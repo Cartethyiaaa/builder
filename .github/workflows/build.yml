@@ -37,7 +37,6 @@ on:
         default: "22"
         type: choice
         options:
-          - "12"
           - "22"
           - "neutron"
       LTOBUILD:
@@ -71,17 +70,6 @@ on:
         options:
           - test
           - release
-      KERNELBRANCH:
-        description: "Kernel Branch (Main Repo)"
-        required: true
-        default: "test"
-        type: choice
-        options:
-          - test
-          - v5.10
-          - android12-5.10
-          - android12-5.10-staging
-          - android16-6.12
       KERNELNAME:
         description: "Kernel Name"
         default: "Cinnamon"
