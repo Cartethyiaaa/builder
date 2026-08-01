@@ -80,7 +80,7 @@ info "Cloning kernel source from $KERNEL_REPO ($KERNEL_BRANCH)..."
 rm -rf "$KSRC"
 mkdir -p "$GKI_DIR"
 
-git clone --depth=5 -j"$(nproc --all)" -b "$KERNEL_BRANCH" "$KERNEL_REPO" "$KSRC" \
+git clone --depth=1 -j"$(nproc --all)" -b "$KERNEL_BRANCH" "$KERNEL_REPO" "$KSRC" \
     || die "Failed to clone kernel source from $KERNEL_REPO"
 
 success "Kernel tree cloned from $KERNEL_REPO ($KERNEL_BRANCH)"
