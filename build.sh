@@ -48,48 +48,25 @@ for var in REPONYA GKIVER CLANGURL VARIANT CONFIGHZ TCPCONG LTOBUILD; do
     [[ -n "${!var:-}" ]] || die "Required env var \$$var is not set"
 done
 
-# GKI Manifest Version
-case "$GKIVER" in
-    5.10)
-        MANIFEST_BRANCH="common-android12-5.10"
-        ;;
-    6.12)
-        MANIFEST_BRANCH="common-android16-6.12"
-        ;;
-    *)
-        die "Invalid GKIVER: $GKIVER (valid: 5.10 | 6.12)"
-        ;;
-esac
-
-# Init Sync
-info "Initializing and Syncing GKI Android $GKIVER Source Tree..."
-mkdir -p "$GKI_DIR" && cd "$GKI_DIR"
-
-repo init -u https://android.googlesource.com/kernel/manifest -b "$MANIFEST_BRANCH" --depth=1
-repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune "-j$(nproc --all)"
-
-cd "$WORKDIR"
-success "GKI manifest sync complete."
-
-cd "$KSRC"
-
+# Source Selection
 case "$REPONYA" in
     main)
-        REMOTE_NAME="Cartethyiaaa"
         case "$GKIVER" in
             5.10)
                 KERNEL_REPO="https://github.com/Cartethyiaaa/android_kernel_common-5.10.git"
                 KERNEL_BRANCH="${KERNELBRANCH:-android12-5.10}"
                 ;;
             6.12)
-                KERNEL_REPO="https://github.com/Cartethyiaaa/android_kernel_common-6.12.git"
-                KERNEL_BRANCH="${KERNELBRANCH:-android16-6.12}"
+                KERNEL_REPO="https://gitlab.com/hiralaya-team/android_kernel_common-6.12"
+                KERNEL_BRANCH="staging"
+                ;;
+            *)
+                die "Invalid GKIVER for REPONYA=main: $GKIVER (valid: 5.10 | 6.12)"
                 ;;
         esac
         ;;
     rama)
         [[ "$GKIVER" == "5.10" ]] || die "REPONYA=rama only has a 5.10 tree available"
-        REMOTE_NAME="Anisphia"
         KERNEL_REPO="https://github.com/ramabondanp/android_kernel_common-5.10.git"
         KERNEL_BRANCH="android12-5.10-staging"
         ;;
@@ -98,16 +75,15 @@ case "$REPONYA" in
         ;;
 esac
 
-info "Updating kernel source using $REMOTE_NAME ($KERNEL_BRANCH)..."
+info "Cloning kernel source from $KERNEL_REPO ($KERNEL_BRANCH)..."
 
-if ! git remote | grep -q "^${REMOTE_NAME}$"; then
-    git remote add "$REMOTE_NAME" "$KERNEL_REPO"
-fi
+rm -rf "$KSRC"
+mkdir -p "$GKI_DIR"
 
-git fetch "-j$(nproc --all)" "$REMOTE_NAME"
-git checkout -B "update-${KERNEL_BRANCH}" "${REMOTE_NAME}/${KERNEL_BRANCH}"
+git clone --depth=5 -j"$(nproc --all)" -b "$KERNEL_BRANCH" "$KERNEL_REPO" "$KSRC" \
+    || die "Failed to clone kernel source from $KERNEL_REPO"
 
-success "Kernel tree updated to ${REMOTE_NAME}/${KERNEL_BRANCH}"
+success "Kernel tree cloned from $KERNEL_REPO ($KERNEL_BRANCH)"
 
 # Return to WORKDIR for toolchain setup
 cd "$WORKDIR"
@@ -246,13 +222,28 @@ case "$VARIANT" in
         ;;
 
     SUSFS)
+        # Map SUSFS branch/patch to the kernel version being built
+        case "$GKIVER" in
+            5.10)
+                SUSFS_BRANCH="gki-android12-5.10"
+                ;;
+            6.12)
+                SUSFS_BRANCH="gki-android16-6.12"
+                ;;
+            *)
+                die "No SUSFS mapping for GKIVER: $GKIVER"
+                ;;
+        esac
+
         git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu/ \
-            -b gki-android12-5.10 sus
+            -b "$SUSFS_BRANCH" sus
         rm -rf sus/.git
         cp -r sus/kernel_patches/fs .
         cp -r sus/kernel_patches/include .
-        patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch \
-            || die "SuSFS patch failed"
+
+        SUSFS_PATCH=$(find sus/kernel_patches -maxdepth 1 -name "*_add_susfs_in_${SUSFS_BRANCH}.patch" -print -quit)
+        [[ -f "$SUSFS_PATCH" ]] || die "SuSFS patch not found for branch $SUSFS_BRANCH"
+        patch -p1 < "$SUSFS_PATCH" || die "SuSFS patch failed"
         rm -rf sus
 
         echo "CONFIG_KSU=y"         >> "$DEFCONFIG"
@@ -422,7 +413,7 @@ text_tg=$(cat << EOF
 ⏱ *Build Time*: \`${BUILD_MIN}m ${BUILD_SEC}s\`
 📦 *Package Size*: \`${ZIP_FINAL_SIZE}\`
 
-🔖 *Last Commit*: [${k_lastcommit}](${KERNEL_REPO}/commit/${k_lastcommit})
+🔖 *Last Commit*: [${k_lastcommit}](${KERNEL_REPO%.git}/commit/${k_lastcommit})
 
 📜 *Recent Changes*:
 \`\`\`
