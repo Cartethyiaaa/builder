@@ -61,12 +61,12 @@ case "$REPONYA" in
                 KERNEL_BRANCH="staging"
                 ;;
             *)
-                die "Invalid GKIVER for REPONYA=main: $GKIVER (valid: 5.10 | 6.12)"
+                die "Invalid GKIVER"
                 ;;
         esac
         ;;
     rama)
-        [[ "$GKIVER" == "5.10" ]] || die "REPONYA=rama only has a 5.10 tree available"
+        [[ "$GKIVER" == "5.10" ]] || die
         KERNEL_REPO="https://github.com/ramabondanp/android_kernel_common-5.10.git"
         KERNEL_BRANCH="android12-5.10-staging"
         ;;
@@ -88,7 +88,7 @@ success "Kernel tree cloned from $KERNEL_REPO ($KERNEL_BRANCH)"
 # Return to WORKDIR for toolchain setup
 cd "$WORKDIR"
 
-# TOOLCHAIN SETUP (CLANG)
+# TOOLCHAIN SETUP
 case "$CLANGURL" in
     12)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/06a71ddac05c22edb2d10b590e1769b3f8619bef/clang-r416183b.tar.gz" ;;
     22)   CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/af3fae2c8e67673c43217d0cf75dbf3f268de272/clang-r596125.tar.gz" ;;
