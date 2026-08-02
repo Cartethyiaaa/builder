@@ -372,7 +372,7 @@ info "Image size: $IMAGE_SIZE"
 # KMI Check
 if [[ "$LINUX_MAJOR" -eq 6 ]]; then
     KMI_CHECK_SCRIPT="$WORKDIR/py/kmi-check-6.x.py"
-    KMI_ABI="$KSRC/android/abi_gki_aarch64.stg"
+    KMI_ABI="$KSRC/gki/aarch64/abi.stg"
 else
     KMI_CHECK_SCRIPT="$WORKDIR/py/kmi-check-5.x.py"
     KMI_ABI="$KSRC/android/abi_gki_aarch64.xml"
