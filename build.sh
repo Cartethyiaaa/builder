@@ -57,8 +57,8 @@ case "$REPONYA" in
                 KERNEL_BRANCH="${KERNELBRANCH:-android12-5.10}"
                 ;;
             6.12)
-                KERNEL_REPO="https://gitlab.com/hiralaya-team/android_kernel_common-6.12"
-                KERNEL_BRANCH="staging"
+                KERNEL_REPO="https://github.com/Cartethyiaaa/android_kernel_common-5.10.git"
+                KERNEL_BRANCH="6.12"
                 ;;
             *)
                 die "Invalid GKIVER"
