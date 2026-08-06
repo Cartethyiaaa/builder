@@ -20,7 +20,23 @@ TIMEZONE="Asia/Jakarta"
 
 # Build Defaults
 KERNEL_DEFCONFIG="gki_defconfig"
-ANYKERNEL_REPO="https://github.com/rinnsakaguchi/AnyKernel3"
+# Validate Required Env
+for var in REPONYA GKIVER CLANGURL VARIANT CONFIGHZ TCPCONG LTOBUILD; do
+    [[ -n "${!var:-}" ]] || die "Required env var \$$var is not set"
+done
+
+# AnyKernel3 source selection based on kernel version
+case "$GKIVER" in
+    6.12)
+        ANYKERNEL_REPO="https://github.com/Cartethyiaaa/AnyKernel3-1"
+        ANYKERNEL_BRANCH="patch-1"
+        ;;
+    *)
+        ANYKERNEL_REPO="https://github.com/rinnsakaguchi/AnyKernel3"
+        ANYKERNEL_BRANCH="master"
+        ;;
+esac
+
 ANYKERNEL_BRANCH="master"
 GKI_RELEASES_REPO="Cartethyiaaa/builder"
 BUILD_START=$(date +%s)
